@@ -1172,16 +1172,26 @@ export class MaintenanceEngine {
             // 1. AGGRESSIVE NOISE FILTERING BEFORE AI
             const text = node.textContent?.toLowerCase() || '';
 
-            // Kill list patterns - remove immediately
+            // 🔥 ULTIMATE SOTA KILL LIST - Patterns to incinerate immediately
             const garbagePatterns = [
-                'subscribe to', 'your email', 'enter your email', 'email address',
-                'privacy notice', 'privacy policy', 'cookie policy', 'i agree to',
-                'updates on the latest', 'sign up for', 'newsletter',
-                'follow us on', 'share this', 'tweet this', 'pin it',
-                'leave a comment', 'comment below', 'your name',
-                'previous post', 'next post', 'back to top',
-                'search for:', 'categories:', 'tags:', 'posted in',
-                'about us', 'contact us', 'home page'
+                // Subscription forms
+                'subscribe', 'enter email', 'sign up', 'gear up to fit', 'newsletter',
+                'your email', 'email address', 'get updates',
+                // Cookie/Privacy notices
+                'i agree', 'privacy policy', 'cookie policy', 'personal data',
+                'accept cookies', 'cookie settings', 'privacy notice',
+                // Sidebar/Menu links
+                'about us', 'contact', 'see also', 'related posts',
+                'categories', 'tags', 'search for:', 'posted in',
+                // Login/Comment prompts
+                'logged in as', 'leave a reply', 'leave a comment', 'comment below',
+                'your name', 'your comment',
+                // Navigation
+                'previous post', 'next post', 'back to top', 'breadcrumb',
+                // Social/Sharing
+                'follow us', 'share this', 'tweet this', 'pin it',
+                // Advertisements
+                'affiliate', 'sponsored', 'advertisement', 'ad disclosure'
             ];
 
             const isGarbage = garbagePatterns.some(pattern => text.includes(pattern));
