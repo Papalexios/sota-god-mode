@@ -624,11 +624,11 @@ export class MaintenanceEngine {
     private async optimizeDOMSurgically(page: SitemapPage, context: GenerationContext) {
         const { wpConfig, apiClients, selectedModel, geoTargeting, openrouterModels, selectedGroqModel } = context;
         this.logCallback(`📥 Fetching LIVE content for: ${page.title}...`);
-        
+
         let rawContent = await this.fetchRawContent(page, wpConfig);
         if (!rawContent || rawContent.length < 500) {
             this.logCallback("❌ Content too short/empty. Skipping.");
-            localStorage.setItem(`sota_last_proc_${page.id}`, Date.now().toString()); 
+            localStorage.setItem(`sota_last_proc_${page.id}`, Date.now().toString());
             return;
         }
 
@@ -640,77 +640,91 @@ export class MaintenanceEngine {
         let schemaInjected = false;
         if (!hasSchema) {
             this.logCallback("🔍 No Schema detected. Injecting High-Performance Schema...");
-            // We just note it here, the publish function appends it if missing from structure
             schemaInjected = true;
         }
 
-        const textNodes = Array.from(body.querySelectorAll('p, li, h2, h3, h4'));
+        const textNodes = Array.from(body.querySelectorAll('p, li'));
         const safeNodes = textNodes.filter(node => {
-            if (node.closest('figure')) return false; 
-            if (node.querySelector('img, iframe, video')) return false; 
+            if (node.closest('figure')) return false;
+            if (node.closest('table')) return false;
+            if (node.closest('.wp-block-code')) return false;
+            if (node.closest('.amazon-box')) return false;
+            if (node.closest('.product-box')) return false;
+            if (node.closest('.sota-references-section')) return false;
+            if (node.querySelector('img, iframe, video, table, a[href*="amazon"]')) return false;
+            if (node.querySelector('a')) {
+                const links = node.querySelectorAll('a');
+                if (links.length > 2) return false;
+            }
             if (node.className.includes('wp-block-image')) return false;
-            if (node.textContent?.trim().length === 0) return false;
+            if (node.className.includes('key-takeaways')) return false;
+            const textContent = node.textContent?.trim() || '';
+            if (textContent.length === 0) return false;
+            if (textContent.length < 50) return false;
+            if (textContent.includes('$') || textContent.includes('Buy Now') || textContent.includes('Price')) return false;
             return true;
         });
 
-        const BATCH_SIZE = 3; 
+        const BATCH_SIZE = 2;
         let changesMade = 0;
-        const MAX_BATCHES = 15; 
+        const MAX_BATCHES = 8;
+
+        this.logCallback(`⚡ Found ${safeNodes.length} safe text nodes. Processing top ${MAX_BATCHES * BATCH_SIZE}...`);
 
         for (let i = 0; i < Math.min(safeNodes.length, MAX_BATCHES * BATCH_SIZE); i += BATCH_SIZE) {
             const batch = safeNodes.slice(i, i + BATCH_SIZE);
-            const batchText = batch.map(n => n.outerHTML).join('\n\n');
 
-            this.logCallback(`⚡ Optimizing Text Batch ${Math.floor(i/BATCH_SIZE) + 1}...`);
+            for (const node of batch) {
+                try {
+                    const originalText = node.textContent || '';
+                    const originalHTML = node.innerHTML;
 
-            try {
-                const improvedBatchHtml = await memoizedCallAI(
-                    apiClients, selectedModel, geoTargeting, openrouterModels, selectedGroqModel,
-                    'dom_content_polisher', 
-                    [batchText, [page.title]], 
-                    'html'
-                );
+                    if (originalText.length < 60) continue;
 
-                const cleanBatch = surgicalSanitizer(improvedBatchHtml);
-                
-                if (cleanBatch && cleanBatch.length > 10) {
-                    const tempDiv = document.createElement('div');
-                    tempDiv.innerHTML = cleanBatch;
-                    
-                    if (tempDiv.childElementCount === batch.length) {
-                        batch.forEach((node, index) => {
-                            const newNode = tempDiv.children[index];
-                            if (newNode && node.tagName === newNode.tagName) {
-                                // Only update if significantly different to save DB writes
-                                if (node.innerHTML.length !== newNode.innerHTML.length) {
-                                    node.innerHTML = newNode.innerHTML;
-                                    changesMade++;
-                                }
-                            }
-                        });
+                    this.logCallback(`⚡ Polishing: "${originalText.substring(0, 60)}..."`);
+
+                    const improvedText = await memoizedCallAI(
+                        apiClients, selectedModel, geoTargeting, openrouterModels, selectedGroqModel,
+                        'dom_content_polisher',
+                        [originalText, [page.title]],
+                        'text'
+                    );
+
+                    const cleanText = surgicalSanitizer(improvedText).trim();
+
+                    if (cleanText && cleanText.length > 40 && cleanText !== originalText) {
+                        const hasLinks = originalHTML.includes('<a ');
+                        const hasBold = originalHTML.includes('<strong>') || originalHTML.includes('<b>');
+
+                        if (hasLinks || hasBold) {
+                            continue;
+                        }
+
+                        node.textContent = cleanText;
+                        changesMade++;
                     }
+                } catch (e) {
+                    this.logCallback(`⚠️ AI Glitch. Skipping node...`);
                 }
-            } catch (e) {
-                this.logCallback(`⚠️ AI Glitch on batch. Retrying...`);
+                await this.sleep(600);
             }
-            await this.sleep(800);
         }
 
         if (changesMade > 0 || schemaInjected) {
-            this.logCallback(`💾 Saving ${changesMade} surgical updates + Schema...`);
+            this.logCallback(`💾 Saving ${changesMade} text updates + Schema...`);
             const updatedHtml = body.innerHTML;
 
             const publishResult = await publishItemToWordPress(
-                { 
+                {
                     id: page.id, title: page.title, type: 'refresh', status: 'generating', statusText: 'Updating',
-                    generatedContent: { 
-                        ...normalizeGeneratedContent({}, page.title), 
-                        content: updatedHtml, 
+                    generatedContent: {
+                        ...normalizeGeneratedContent({}, page.title),
+                        content: updatedHtml,
                         slug: page.slug,
-                        isFullSurgicalRewrite: true, 
-                        surgicalSnippets: undefined 
+                        isFullSurgicalRewrite: true,
+                        surgicalSnippets: undefined
                     },
-                    crawledContent: null, originalUrl: page.id 
+                    crawledContent: null, originalUrl: page.id
                 },
                 localStorage.getItem('wpPassword') || '', 'publish', fetchWordPressWithRetry, wpConfig
             );
