@@ -665,9 +665,18 @@ export class MaintenanceEngine {
     async start(context: GenerationContext) {
         this.currentContext = context;
         if (this.isRunning) return;
-        
+
         this.isRunning = true;
         this.logCallback("🚀 God Mode Activated: Engine Cold Start...");
+
+        // CRITICAL: Validate API clients before starting
+        if (!context.apiClients || !context.apiClients[context.selectedModel as keyof typeof context.apiClients]) {
+            this.logCallback("❌ CRITICAL ERROR: AI API Client not initialized!");
+            this.logCallback(`🔧 REQUIRED: Configure ${context.selectedModel.toUpperCase()} API key in Settings`);
+            this.logCallback("🛑 STOPPING: God Mode requires a valid AI API client");
+            this.isRunning = false;
+            return;
+        }
 
         if (this.currentContext.existingPages.length === 0) {
             if (this.currentContext.wpConfig.url) {
@@ -689,11 +698,20 @@ export class MaintenanceEngine {
                 }
                 const targetPage = pages[0];
                 this.logCallback(`🎯 Target Acquired: "${targetPage.title}"`);
-                await this.optimizeDOMSurgically(targetPage, this.currentContext);
-                this.logCallback("💤 Cooling down for 15 seconds...");
-                await delay(15000);
+                try {
+                    await this.optimizeDOMSurgically(targetPage, this.currentContext);
+                    this.logCallback("💤 Cooling down for 15 seconds...");
+                    await delay(15000);
+                } catch (optimizeError: any) {
+                    this.logCallback(`❌ Optimization failed for "${targetPage.title}": ${optimizeError.message}`);
+                    if (optimizeError.stack) {
+                        this.logCallback(`📋 Error details: ${optimizeError.stack.substring(0, 150)}`);
+                    }
+                    await delay(5000);
+                }
             } catch (e: any) {
-                this.logCallback(`❌ Error: ${e.message}. Restarting...`);
+                this.logCallback(`❌ Fatal Error: ${e.message}`);
+                this.logCallback(`🔄 Restarting in 10 seconds...`);
                 await delay(10000);
             }
         }
@@ -1146,8 +1164,8 @@ ${finalLinks.map(ref => `  <li><a href="${ref.url}" target="_blank" rel="noopene
 
         let rawContent = await this.fetchRawContent(page, wpConfig);
         if (!rawContent || rawContent.length < 300) {
-            this.logCallback(`❌ SKIP: Content too short (${rawContent?.length || 0} chars)`);
-            localStorage.setItem(`sota_last_proc_${pageIdentifier}`, Date.now().toString());
+            this.logCallback(`❌ SKIP: Content too short (${rawContent?.length || 0} chars) - Will retry later`);
+            // Don't mark as processed - let it retry
             return;
         }
 
@@ -1813,8 +1831,12 @@ ${finalLinks.map(ref => `  <li><a href="${ref.url}" target="_blank" rel="noopene
                 }
             }
         } else {
-            this.logCallback("✓ SKIP: Content already SOTA-optimized");
-            localStorage.setItem(`sota_last_proc_${pageIdentifier}`, Date.now().toString());
+            // CRITICAL FIX: Don't mark as optimized if no changes were made
+            // This could mean God Mode agent failed, so let it retry
+            this.logCallback("⚠️ No changes applied (0 improvements). NOT marking as complete.");
+            this.logCallback("💡 This page will be retried on next cycle.");
+            // Remove the processing lock set at line 1185 so it can be retried
+            localStorage.removeItem(`sota_last_proc_${pageIdentifier}`);
         }
     }
 

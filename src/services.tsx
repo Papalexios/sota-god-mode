@@ -724,11 +724,18 @@ export class MaintenanceEngine {
                 }
 
                 this.logCallback(`🎯 Target Acquired: "${targetPage.title}"`);
-                await this.optimizeDOMSurgically(targetPage, this.currentContext);
-                this.logCallback("💤 Cooling down for 10 seconds...");
-                await this.sleep(10000);
+                try {
+                    await this.optimizeDOMSurgically(targetPage, this.currentContext);
+                    this.logCallback("💤 Cooling down for 15 seconds...");
+                    await this.sleep(15000);
+                } catch (optimizeError: any) {
+                    this.logCallback(`❌ Optimization failed for "${targetPage.title}": ${optimizeError.message}`);
+                    this.logCallback(`📋 Error stack: ${optimizeError.stack?.substring(0, 200)}`);
+                    await this.sleep(5000);
+                }
             } catch (e: any) {
-                this.logCallback(`❌ Error: ${e.message}. Restarting...`);
+                this.logCallback(`❌ Fatal Error: ${e.message}`);
+                this.logCallback(`🔄 Restarting in 10 seconds...`);
                 await this.sleep(10000);
             }
         }
@@ -759,8 +766,8 @@ export class MaintenanceEngine {
 
         let rawContent = await this.fetchRawContent(page, wpConfig);
         if (!rawContent || rawContent.length < 500) {
-            this.logCallback("❌ Content too short/empty. Skipping.");
-            localStorage.setItem(`sota_last_proc_${page.id}`, Date.now().toString());
+            this.logCallback("❌ Content too short/empty. Skipping (will retry later).");
+            // Don't mark as processed - let it retry
             return;
         }
 
